@@ -8,6 +8,9 @@ services:
       - .env
     environment:
       - WEBHOOK_URL=${WEBHOOK_URL:-http://consumer:8080/notify}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,consumer}
     volumes:
       - ./data:/data
 
@@ -17,6 +20,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
     volumes:
       - ./consumer_data:/data
     ports:

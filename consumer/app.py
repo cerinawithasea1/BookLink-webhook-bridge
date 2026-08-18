@@ -4,11 +4,17 @@ import hashlib
 import time
 import tempfile
 import sqlite3
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import requests
 import boto3
+from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
 
 app = Flask(__name__)
+
+# Prometheus metrics
+UPLOADS_TOTAL = Counter('consumer_uploads_total', 'Total uploads attempted')
+UPLOADS_FAILED = Counter('consumer_uploads_failed', 'Total uploads failed')
+DEDUPE_SKIPPED = Counter('consumer_dedupe_skipped_total', 'Total uploads skipped due to dedupe')
 
 # Storage / uploader configuration
 S3_BUCKET = os.environ.get("S3_BUCKET")
@@ -112,6 +118,16 @@ def atomic_write_stream(response, final_path):
                 pass
 
 
+@app.route("/metrics", methods=["GET"])
+def metrics():
+    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"ok": True}), 200
+
+
 @app.route("/notify", methods=["POST"])
 def notify():
     # Verify signature if configured
@@ -138,11 +154,13 @@ def notify():
         stored = find_file_by_name_size(filename, size)
         if stored:
             app.logger.info("Light dedupe: found existing file for %s (%s), returning stored=%s", filename, size, stored)
+            DEDUPE_SKIPPED.inc()
             return jsonify({"ok": True, "stored": stored, "dedupe": "light"}), 200
 
     # Attempt uploader-mode first (stream Booklink -> uploader)
     if UPLOADER_URL:
         def do_upload():
+            UPLOADS_TOTAL.inc()
             with requests.get(link, stream=True, timeout=120) as r:
                 r.raise_for_status()
                 headers = {}
@@ -173,10 +191,12 @@ def notify():
             return jsonify(result), 200
         except Exception as e:
             app.logger.error("Uploader-mode failed after retries: %s", e)
+            UPLOADS_FAILED.inc()
             # fall through to S3/local fallback
 
     # Else fallback to S3 upload if configured or local save
     def do_s3_or_local():
+        UPLOADS_TOTAL.inc()
         with requests.get(link, stream=True, timeout=120) as r:
             r.raise_for_status()
             if s3:
@@ -199,6 +219,7 @@ def notify():
         return jsonify(result), 200
     except Exception as e:
         app.logger.error("Final upload failed after retries: %s", e)
+        UPLOADS_FAILED.inc()
         return jsonify({"error": str(e)}), 500
 
 
