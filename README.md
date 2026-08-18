@@ -10,50 +10,33 @@ Why use this
 Files
 - notifier.py — main forwarder service.
 - .env.example — environment variables.
-- Dockerfile, docker-compose.yml — containerized run.
+- Dockerfile, docker-compose.yml — containerized run (includes optional consumer)
 - requirements.txt — Python deps.
+- consumer/ — optional webhook consumer that uploads streamed files to S3 or local disk
 
 Quick start (local)
-1. Create a directory and paste these files. Copy `.env.example` -> `.env` and fill values.
-2. Create a StringSession for the forwarder account:
-   - Start Python REPL and use Telethon to create a StringSession:
-     ```
-     pip install telethon
-     python -c "from telethon.sync import TelegramClient; from telethon.sessions import StringSession; print('Run helper')"
-     ```
-   - Alternatively see Telethon docs: https://docs.telethon.dev/en/stable/basic/stringsession.html
-3. Run:
-   - Local:
-     ```
-     pip install -r requirements.txt
-     export FORWARDER_SESSION="..."
-     export API_ID=...
-     export API_HASH=...
-     python notifier.py
-     ```
-   - Docker:
-     ```
-     docker build -t booklink-bridge .
-     docker-compose up -d
-     ```
+1. Clone the repo and checkout the branch 'add/booklink-bridge' or review the PR.
 
-Webhook payload
-POST JSON:
-{
-  "link": "https://yourbooklink/b/xxxxx" | null,
-  "chat_id": <original chat id>,
-  "message_id": <original message id>,
-  "filename": <optional filename from Telegram metadata>,
-  "size": <optional size in bytes>
-}
+2. Copy `.env.example` -> `.env` and fill values.
+   - FORWARDER_SESSION: create a StringSession for the forwarder account (see Telethon docs).
+   - API_ID / API_HASH: from my.telegram.org.
+   - LIBRARIAN_ID: numeric id of your Booklink librarian account (the account Booklink uses).
+   - WATCH_CHATS: comma-separated chat ids or group usernames you want to monitor (or leave empty to watch everything the forwarder account can see).
+   - WEBHOOK_URL: where the notifier will POST (defaults to the in-repo consumer when using compose: http://consumer:8080/notify).
+   - WEBHOOK_SECRET: optional shared secret used to HMAC-sign payloads. If set, both notifier and consumer should share it.
+   - For the consumer: S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (or MINIO_ENDPOINT and credentials).
+
+3. Build and start:
+   - docker-compose up -d --build
+
+4. Test:
+   - Ensure the forwarder account is a member of the watched group(s).
+   - Post a media file into a watched group; Booklink should reply to the forwarded message and the bridge will POST the /b/ link to the webhook.
+
+Security
+- Do not commit secrets into the repository. Use .env and container secrets in production.
+- Use WEBHOOK_SECRET to authenticate webhook payloads.
 
 Notes
-- The forwarder must be a member of the groups listed in WATCH_CHATS (or any groups if WATCH_CHATS empty).
-- The LIBRARIAN_ID must be Booklink's account id (the account Booklink is monitoring).
-- The forwarder expects Booklink to reply to the forwarded message; Booklink's reply must contain the /b/ link (default extraction regex matches that).
-- The bridge stores processed message ids in a sqlite DB (PROCESSED_DB_PATH) to avoid duplicates.
-
-Next steps / optional:
-- Add authentication to the webhook endpoint (HMAC or shared secret).
-- Add a webhook consumer that streams the Booklink URL into object storage (S3/MinIO) if you want permanent backups.
-- Add deduplication by hashing before uploading to storage.
+- The bridge stores processed (chat_id, message_id) in a sqlite DB (PROCESSED_DB_PATH, default ./data/processed.db) to avoid duplicate events.
+- The consumer will either upload streams to S3 (if S3_BUCKET set) or save to local /data storage.

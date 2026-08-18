@@ -17,12 +17,16 @@ Environment variables (see .env.example):
 - REPLY_TIMEOUT_S    : seconds to wait for librarian reply (default 30)
 - PROCESSED_DB_PATH  : path to sqlite db (default ./data/processed.db)
 - LINK_REGEX         : optional override regex to find Booklink link (default catches /b/<token>)
+- WEBHOOK_SECRET     : optional shared secret used to HMAC-sign outgoing webhook payloads
 """
 import os
 import asyncio
 import logging
 import re
 import sqlite3
+import json
+import hmac
+import hashlib
 from pathlib import Path
 from typing import Optional
 
@@ -39,10 +43,11 @@ API_HASH = os.environ["API_HASH"]
 FORWARDER_SESSION = os.environ["FORWARDER_SESSION"]
 LIBRARIAN_ID = int(os.environ["LIBRARIAN_ID"])
 WATCH_CHATS = [x.strip() for x in os.environ.get("WATCH_CHATS", "").split(",") if x.strip()]
-WEBHOOK_URL = os.environ["WEBHOOK_URL"]
+WEBHOOK_URL = os.environ["WEBHOOK_URL"] if os.environ.get("WEBHOOK_URL") else os.environ.get("WEBHOOK_URL", "http://consumer:8080/notify")
 REPLY_TIMEOUT_S = int(os.environ.get("REPLY_TIMEOUT_S", "30"))
 PROCESSED_DB_PATH = os.environ.get("PROCESSED_DB_PATH", "./data/processed.db")
 LINK_REGEX = os.environ.get("LINK_REGEX", r"(https?://[^\s]+/b/[A-Za-z0-9_\-]+(?:\?[^\s]+)?)")
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
 # ensure data dir
 Path(PROCESSED_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -89,7 +94,12 @@ def mark_processed(chat_id: int, message_id: int):
 
 async def post_webhook(session: aiohttp.ClientSession, payload: dict):
     try:
-        async with session.post(WEBHOOK_URL, json=payload, timeout=20) as resp:
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        headers = {"Content-Type": "application/json"}
+        if WEBHOOK_SECRET:
+            sig = hmac.new(WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
+            headers["X-Booklink-Signature"] = sig
+        async with session.post(WEBHOOK_URL, data=body, headers=headers, timeout=20) as resp:
             if resp.status >= 300:
                 text = await resp.text()
                 log.error("Webhook POST failed %s: %s", resp.status, text)

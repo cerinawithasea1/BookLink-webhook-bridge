@@ -6,5 +6,18 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://consumer:8080/notify}
     volumes:
       - ./data:/data
+
+  consumer:
+    build:
+      context: ./consumer
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./consumer_data:/data
+    ports:
+      - "8080:8080"
